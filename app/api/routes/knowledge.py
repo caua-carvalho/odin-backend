@@ -33,10 +33,13 @@ async def list_knowledge(
 
     if tags:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-        if tag_list:
-            # JSON contains any of the tags
-            for tag in tag_list:
-                query = query.where(KnowledgeItem.tags.contains([tag]))
+        # SQLite JSON columns are stored as text; JSON ``contains`` is not
+        # supported by the SQLite dialect, so expand the array with json_each.
+        for tag in tag_list:
+            tag_rows = func.json_each(KnowledgeItem.tags).table_valued("value")
+            query = query.where(
+                select(1).select_from(tag_rows).where(tag_rows.c.value == tag).exists()
+            )
 
     if q:
         # Simple text search in title and content

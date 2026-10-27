@@ -1,13 +1,14 @@
 """ODIN V2 Backend — Security & Authentication"""
 
 import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
+import bcrypt
 from fastapi import Depends, HTTPException, Request, status
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,25 +18,50 @@ from app.models import User, UserSession
 
 settings = get_settings()
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt only hashes the first 72 bytes of a password and raises on longer
+# inputs in recent releases. Encode first so we never split a UTF-8 character.
+_BCRYPT_MAX_PASSWORD_BYTES = 72
+
+# Validate the shape before handing a hash to bcrypt: some bcrypt builds panic
+# (raising a BaseException that bypasses ``except Exception``) on truncated
+# hashes. This keeps a corrupt row from crashing the login endpoint.
+_BCRYPT_HASH_RE = re.compile(r"^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$")
+
+
+def _password_bytes(password: str) -> bytes:
+    """Encode a password for bcrypt, enforcing its 72-byte limit."""
+    return password.encode("utf-8")[:_BCRYPT_MAX_PASSWORD_BYTES]
 
 
 def hash_password(password: str) -> str:
-    """Hash a password."""
-    return pwd_context.hash(password)
+    """Hash a password with bcrypt.
+
+    We call bcrypt directly instead of going through passlib: passlib 1.7.4
+    (unmaintained since 2020) crashes with bcrypt >= 4.1/5.x, which turns every
+    login into a 500 in fresh deployments.
+    """
+    return bcrypt.hashpw(_password_bytes(password), bcrypt.gensalt()).decode("ascii")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify a password against a bcrypt hash.
+
+    Returns ``False`` for malformed hashes instead of raising, so a corrupted
+    database row cannot produce a 500 on the login endpoint.
+    """
+    if not _BCRYPT_HASH_RE.match(hashed_password):
+        return False
+    try:
+        return bcrypt.checkpw(_password_bytes(plain_password), hashed_password.encode("ascii"))
+    except (ValueError, TypeError):
+        return False
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a JWT access token."""
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.access_token_expire_minutes))
-    to_encode.update({"exp": expire, "type": "access"})
+    to_encode.update({"exp": expire, "type": "access", "jti": secrets.token_urlsafe(16)})
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
 
@@ -43,7 +69,9 @@ def create_refresh_token(data: dict) -> str:
     """Create a JWT refresh token."""
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
-    to_encode.update({"exp": expire, "type": "refresh"})
+    # `jti` guarantees uniqueness so concurrent logins/rotations for the same
+    # user do not produce identical tokens (and violate the token_hash index).
+    to_encode.update({"exp": expire, "type": "refresh", "jti": secrets.token_urlsafe(16)})
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
 

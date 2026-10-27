@@ -9,7 +9,6 @@ from structlog import get_logger
 
 from app.core.config import get_settings
 from app.core.database import close_db, init_db
-from app.core.security import revoke_all_user_sessions
 from app.integrations.hermes.adapter import init_hermes_adapter, close_hermes_adapter
 from app.services.run_manager import recover_stale_runs
 from app.api.routes import health, auth, conversations, runs, approvals, knowledge, system

@@ -1,10 +1,8 @@
 """ODIN V2 Backend — Auth Routes"""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -12,31 +10,35 @@ from app.core.database import get_db
 from app.core.security import (
     create_access_token,
     create_refresh_token,
-    decode_token,
     hash_token,
     revoke_all_user_sessions,
     revoke_session,
     validate_refresh_token,
-    get_current_user_id,
     get_current_user,
 )
-from app.models import User
-from app.schemas import LoginRequest, LoginResponse, RefreshRequest, UserResponse
+from app.models import User, UserSession
+from app.schemas import LoginRequest, LoginResponse, UserResponse
 
 router = APIRouter()
 settings = get_settings()
 
 
-@router.post("/login", response_model=LoginResponse)
+def _is_mobile_client(request: Request) -> bool:
+    """Native clients identify themselves so we can return refresh tokens in JSON."""
+    return request.headers.get("x-odin-client", "").lower() == "mobile"
+
+
+@router.post("/login", response_model=LoginResponse, response_model_exclude_none=True)
 async def login(
-    request: LoginRequest,
+    request: Request,
+    data: LoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     """Login with email and password."""
     from app.core.security import authenticate_user
 
-    user = await authenticate_user(db, request.email, request.password)
+    user = await authenticate_user(db, data.email, data.password)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
@@ -44,12 +46,10 @@ async def login(
     refresh_token = create_refresh_token({"sub": user.id})
 
     # Store refresh token hash
-    from app.models import UserSession
-
     session = UserSession(
         user_id=user.id,
         token_hash=hash_token(refresh_token),
-        expires_at=__import__("datetime").datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days),
+        expires_at=datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days),
     )
     db.add(session)
     await db.commit()
@@ -68,10 +68,11 @@ async def login(
     return LoginResponse(
         access_token=access_token,
         expires_in=settings.access_token_expire_minutes * 60,
+        refresh_token=refresh_token if _is_mobile_client(request) else None,
     )
 
 
-@router.post("/refresh", response_model=LoginResponse)
+@router.post("/refresh", response_model=LoginResponse, response_model_exclude_none=True)
 async def refresh_token(
     request: Request,
     response: Response,
@@ -99,7 +100,7 @@ async def refresh_token(
     new_session = UserSession(
         user_id=session.user_id,
         token_hash=hash_token(new_refresh),
-        expires_at=__import__("datetime").datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days),
+        expires_at=datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days),
     )
     db.add(new_session)
     await db.commit()
@@ -114,7 +115,11 @@ async def refresh_token(
         path="/api/auth",
     )
 
-    return LoginResponse(access_token=new_access, expires_in=settings.access_token_expire_minutes * 60)
+    return LoginResponse(
+        access_token=new_access,
+        expires_in=settings.access_token_expire_minutes * 60,
+        refresh_token=new_refresh if _is_mobile_client(request) else None,
+    )
 
 
 @router.post("/logout")
@@ -126,8 +131,19 @@ async def logout(
 ):
     """Logout current session."""
     refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        # Native clients keep the refresh token in secure storage instead of a cookie.
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        if isinstance(body, dict):
+            refresh_token = body.get("refresh_token")
+
     if refresh_token:
-        await revoke_session(db, hash_token(refresh_token))
+        session = await validate_refresh_token(db, refresh_token)
+        if session and session.user_id == current_user.id:
+            await revoke_session(db, session.id)
 
     response.delete_cookie("refresh_token", path="/api/auth")
     return {"ok": True}

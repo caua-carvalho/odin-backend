@@ -6,14 +6,12 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
-    JSON,
     DateTime,
     Enum,
     ForeignKey,
     Index,
     String,
     Text,
-    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.sqlite import JSON as SQLiteJSON

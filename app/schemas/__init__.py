@@ -40,6 +40,9 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int  # seconds
+    # Only populated for native clients (X-Odin-Client: mobile), which cannot
+    # rely on the HttpOnly refresh cookie used by the web client.
+    refresh_token: Optional[str] = None
 
 
 class RefreshRequest(BaseModel):

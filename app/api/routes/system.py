@@ -1,6 +1,8 @@
 """ODIN V2 Backend — System Status Routes"""
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime
+
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,7 +55,7 @@ async def system_status(
         components=components,
         hermes_connected=hermes_healthy,
         database_connected=db_status == "ok",
-        timestamp=__import__("datetime").datetime.utcnow(),
+        timestamp=datetime.utcnow(),
     )
 
 
@@ -63,5 +65,5 @@ async def system_health():
     return HealthResponse(
         ok=True,
         version="0.1.0",
-        timestamp=__import__("datetime").datetime.utcnow(),
+        timestamp=datetime.utcnow(),
     )

@@ -67,11 +67,57 @@ backend/
 pytest -v
 ```
 
+## Troubleshooting
+
+### `POST /api/auth/login` returns 500
+
+The most common cause on a fresh server is a bcrypt/passlib mismatch. Older
+revisions used **passlib 1.7.4**, which is unmaintained and crashes with
+**bcrypt >= 4.1/5.x**, raising `ValueError: password cannot be longer than 72
+bytes` on every login. The backend now calls `bcrypt` directly and supports
+both 4.x and 5.x.
+
+Check the installed version on the server:
+
+```bash
+python -c "import bcrypt; print(bcrypt.__version__)"
+```
+
+Then reinstall the backend so the pinned dependency is applied:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Other checks for a 500 on login (GETs work, but login writes to the database):
+
+```bash
+# The process running uvicorn must own/be able to write the SQLite file.
+ls -l odin.db
+sudo -u <service-user> test -w /path/to/backend/odin.db && echo writable
+
+# SECRET_KEY must be at least 32 chars and .env must be in backend/.
+grep -E '^(SECRET_KEY|DATABASE_URL|CORS_ORIGINS_RAW)=' .env
+
+# Get the real traceback from the service manager.
+journalctl -u odin -n 100 --no-pager   # or: systemctl --user status odin
+```
+
+Use an absolute `DATABASE_URL` in production so the database does not depend on
+the working directory:
+
+```env
+DATABASE_URL=sqlite+aiosqlite:////opt/odin/odin.db
+CORS_ORIGINS_RAW=https://odin.example.com
+```
+
 ## Key Endpoints
 
 | Endpoint | Description |
 |----------|-------------|
 | `POST /api/auth/login` | Login |
+| `POST /api/auth/refresh` | Rotate refresh token / issue access token |
+| `POST /api/auth/logout` | Revoke the current session |
 | `GET /api/conversations` | List conversations |
 | `POST /api/conversations` | Create conversation |
 | `POST /api/conversations/{id}/runs` | Start agent run (JSON 202) |
@@ -83,3 +129,10 @@ pytest -v
 | `GET /api/knowledge` | List knowledge items |
 | `POST /api/knowledge` | Create knowledge item |
 | `GET /api/system/status` | System health |
+
+### Native clients
+
+Native clients send `X-Odin-Client: mobile`. Login and refresh then include the
+refresh token in the JSON body (in addition to the HttpOnly cookie used by web),
+and logout accepts that token in the request body. Tokens rotate on every
+refresh; the previous session is revoked.

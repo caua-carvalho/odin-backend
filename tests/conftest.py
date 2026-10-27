@@ -1,12 +1,18 @@
 """ODIN V2 Backend — Pytest Configuration"""
 
 import asyncio
+import os
+
 import pytest
-import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.database import Base
-from app.core.config import Settings
+# Settings are read at import time by app.core.database, so the test environment
+# must be configured before any ``app`` module is imported.
+os.environ.setdefault("SECRET_KEY", "test-secret-key-minimum-32-chars-long")
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+
+from app.core.config import Settings  # noqa: E402
+from app.core.database import Base  # noqa: E402
 
 
 @pytest.fixture(scope="session")

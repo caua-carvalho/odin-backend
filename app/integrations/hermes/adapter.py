@@ -7,6 +7,7 @@ of proxying a raw PTY. See :mod:`app.integrations.hermes.gateway`.
 from app.integrations.hermes.gateway import (  # noqa: F401
     HermesError,
     HermesError as HermesAdapterError,
+    HermesGateway,
     HermesGateway as HermesAdapter,
     HermesRpcError,
     HermesSessionRef,
