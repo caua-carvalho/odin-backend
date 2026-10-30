@@ -11,7 +11,7 @@ from app.core.config import get_settings
 from app.core.database import close_db, init_db
 from app.integrations.hermes.adapter import init_hermes_adapter, close_hermes_adapter
 from app.services.run_manager import recover_stale_runs
-from app.api.routes import health, auth, conversations, runs, approvals, knowledge, system
+from app.api.routes import health, auth, conversations, runs, approvals, knowledge, system, skills
 
 logger = get_logger()
 settings = get_settings()
@@ -64,6 +64,7 @@ app.include_router(runs.router, prefix="/api", tags=["Runs"])
 app.include_router(approvals.router, prefix="/api/approvals", tags=["Approvals"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
 app.include_router(system.router, prefix="/api/system", tags=["System"])
+app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
 
 
 @app.get("/")
